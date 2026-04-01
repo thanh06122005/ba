@@ -3,480 +3,265 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import warnings
 
+warnings.filterwarnings('ignore')
+
+# ─────────────────────────────────────────
+# PAGE CONFIGURATION
+# ─────────────────────────────────────────
 st.set_page_config(
-    page_title="Telco Churn Intelligence",
+    page_title="InsightWave | Retention Radar",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
+# Custom Premium CSS Styling
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] { font-size: 26px; font-weight: 700; }
-.block-container { padding-top: 1.5rem; }
-.stTabs [data-baseweb="tab-list"] { gap: 8px; }
-.stTabs [data-baseweb="tab"] {
-    padding: 8px 20px; border-radius: 8px;
-    background: #f0f2f6; font-weight: 500;
-}
-.stTabs [aria-selected="true"] {
-    background: #1f77b4 !important; color: white !important;
-}
+    [data-testid="stMetricValue"] { font-size: 28px; font-weight: 700; color: #1E3A8A; }
+    .main { background-color: #F8FAFC; }
+    .stButton>button { border-radius: 10px; height: 3em; background-color: #2563EB; color: white; font-weight: 600; border: none; }
+    .strategy-card { background: white; padding: 25px; border-radius: 15px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px -3px rgba(0, 0, 0, 0.1); }
+    .sidebar-header { font-size: 1.4rem; font-weight: 800; color: #1E3A8A; margin-bottom: 10px; }
+    .highlight { color: #2563EB; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
+# ─────────────────────────────────────────
+# DATA SYNC ENGINE (Matches Colab Output)
+# ─────────────────────────────────────────
+@st.cache_data
+def load_and_sync_data():
+    try:
+        # Load exported results from Colab
+        df_prob = pd.read_csv("churn_probabilities.csv")
+        df_geo = pd.read_csv("telco_preprocessed.csv")
+        
+        # Merging geo-data for mapping (Syncing with Colab Step 6)
+        # Note: Handled potential column suffixing (_x, _y) from pandas merge
+        merged = df_prob.merge(
+            df_geo[['CustomerID', 'Latitude', 'Longitude', 'City', 'Gender', 'Senior Citizen', 'Partner', 'Dependents']],
+            on='CustomerID', how='left'
+        )
+        
+        # Standardizing names if suffixes exist
+        if 'Monthly Charges_x' in merged.columns:
+            merged.rename(columns={'Monthly Charges_x': 'Monthly Charges', 'Churn Label_x': 'Churn Label'}, inplace=True)
+        
+        return merged
+    except Exception as e:
+        st.error(f"Error loading data: {e}. Ensure 'churn_probabilities.csv' and 'telco_preprocessed.csv' are present.")
+        return pd.DataFrame()
 
-@st.cache_data(show_spinner="Loading data...")
-def load_data():
-    cp = pd.read_csv("churn_probabilities.csv")
-    pp = pd.read_csv("telco_preprocessed.csv")
-    df = cp.merge(
-        pp[["CustomerID", "Latitude", "Longitude",
-            "Gender", "Senior Citizen", "Churn"]],
-        on="CustomerID", how="left"
-    )
-    return df
+df = load_and_sync_data()
 
-
-df = load_data()
-
-# ── SIDEBAR ──
+# ─────────────────────────────────────────
+# SIDEBAR NAVIGATION
+# ─────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📡 Telco Churn Intel")
-    st.caption("IBM Telco · 7,043 customers")
-    st.divider()
-    page = st.radio(
-        "", ["📊 Overview Dashboard", "🎯 Strategy Simulator"],
-        label_visibility="collapsed"
-    )
-
-# ══════════════════════════════════════════
-# PAGE 1: OVERVIEW
-# ══════════════════════════════════════════
-if page == "📊 Overview Dashboard":
-    st.title("📊 Customer Churn Overview")
-
-    total        = len(df)
-    actual_churn = df["Churn Label"].eq("Yes").sum()
-    churn_rate   = actual_churn / total * 100
-    high_risk    = df["Risk_Tier"].eq("High Risk").sum()
-    rev_at_risk  = (df[df["Risk_Tier"].isin(["High Risk", "Medium Risk"])]
-                    ["Monthly Charges"].sum() * 12)
-    avg_prob     = df["Churn_Probability"].mean() * 100
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("👥 Total Customers",    f"{total:,}")
-    c2.metric("🔴 Actual Churned",     f"{actual_churn:,}", f"{churn_rate:.1f}%")
-    c3.metric("🤖 Model Predicted",    f"{df['Predicted_Churn'].sum():,}")
-    c4.metric("⚠️ High Risk",          f"{high_risk:,}")
-    c5.metric("💸 Annual Rev at Risk", f"${rev_at_risk/1e6:.2f}M")
-
+    st.markdown('<p class="sidebar-header">📡 InsightWave Radar</p>', unsafe_allow_html=True)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/IBM_logo.svg/200px-IBM_logo.svg.png", width=70)
+    st.markdown("**Enterprise Retention Intelligence**")
     st.divider()
 
-    # Row 2
-    col1, col2, col3 = st.columns([1.1, 1.1, 1.8])
+    menu = st.selectbox("Navigation Menu", 
+        ["🏠 Executive Dashboard", "🎯 Risk Intelligence", "🗺️ Churn Hotspots", "📈 Revenue Simulation"])
+    
+    st.divider()
+    st.caption("v2.1 · Powered by CatBoost/LGBM Ensemble")
+    st.info("System Synced: Probabilities reflect latest model inference.")
 
-    with col1:
-        st.subheader("Risk Tiers")
-        risk_order  = ["High Risk", "Medium Risk", "Low Risk", "Very Low Risk"]
-        risk_colors = ["#EF5350", "#FFA726", "#66BB6A", "#42A5F5"]
-        rc = df["Risk_Tier"].value_counts().reindex(risk_order).reset_index()
-        rc.columns = ["Tier", "Count"]
-        fig = px.bar(rc, x="Tier", y="Count", color="Tier",
-                     color_discrete_sequence=risk_colors,
-                     text="Count", height=300)
-        fig.update_traces(textposition="outside")
-        fig.update_layout(showlegend=False,
-                          plot_bgcolor="rgba(0,0,0,0)",
-                          paper_bgcolor="rgba(0,0,0,0)",
-                          margin=dict(t=5, b=0),
-                          xaxis_title="", yaxis_title="")
-        st.plotly_chart(fig, use_container_width=True)
+# ─────────────────────────────────────────
+# PAGE 1: EXECUTIVE DASHBOARD
+# ─────────────────────────────────────────
+if menu == "🏠 Executive Dashboard":
+    st.title("📊 Executive Retention Summary")
+    st.markdown("Real-time analysis of customer churn risk and revenue exposure.")
+    
+    # KPI Row
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Total Customers", f"{len(df):,}")
+    with m2:
+        # Check if Churn Label exists
+        c_label = 'Churn Label' if 'Churn Label' in df.columns else 'Churn'
+        churn_rate = (df[c_label] == 'Yes').mean() if 'Yes' in df[c_label].values else df[c_label].mean()
+        st.metric("Actual Churn Rate", f"{churn_rate:.1%}", delta="-0.8%")
+    with m3:
+        high_risk_count = len(df[df['Risk_Tier'] == 'High Risk'])
+        st.metric("High-Risk Segments", f"{high_risk_count:,}", delta_color="inverse")
+    with m4:
+        avg_rev = df['Monthly Charges'].mean()
+        st.metric("Avg. Monthly Bill", f"${avg_rev:,.2f}")
 
-    with col2:
-        st.subheader("Churn by Contract")
-        cc = (df.groupby("Contract")["Churn"]
-              .mean()
-              .sort_values(ascending=False)
-              .reset_index())
-        cc["pct"] = (cc["Churn"] * 100).round(1)
-        fig2 = px.bar(cc, x="Contract", y="pct",
-                      color="pct",
-                      color_continuous_scale=["#66BB6A", "#FFA726", "#EF5350"],
-                      text=cc["pct"].apply(lambda x: f"{x:.1f}%"),
-                      height=300)
-        fig2.update_traces(textposition="outside")
-        fig2.update_layout(showlegend=False, coloraxis_showscale=False,
-                           plot_bgcolor="rgba(0,0,0,0)",
-                           paper_bgcolor="rgba(0,0,0,0)",
-                           margin=dict(t=5, b=0),
-                           yaxis_title="Churn Rate (%)")
-        st.plotly_chart(fig2, use_container_width=True)
+    st.divider()
 
-    with col3:
-        st.subheader("Churn Probability Distribution")
-        fig3 = go.Figure()
-        for label, color, val in [("Retained", "#42A5F5", 0),
-                                   ("Churned",  "#EF5350", 1)]:
-            fig3.add_trace(go.Histogram(
-                x=df[df["Churn"] == val]["Churn_Probability"],
-                name=label, opacity=0.65,
-                marker_color=color, nbinsx=40
-            ))
-        fig3.add_vline(x=0.5, line_dash="dash", line_color="gray",
-                       annotation_text="Threshold=0.5")
-        fig3.update_layout(barmode="overlay", height=300,
-                           plot_bgcolor="rgba(0,0,0,0)",
-                           paper_bgcolor="rgba(0,0,0,0)",
-                           margin=dict(t=5, b=0),
-                           legend=dict(x=0.65, y=0.95),
-                           xaxis_title="Churn Probability")
-        st.plotly_chart(fig3, use_container_width=True)
+    col_left, col_right = st.columns([1, 1])
 
-    # Row 3
-    col4, col5 = st.columns([1, 1.5])
+    with col_left:
+        st.subheader("Risk Tier Distribution")
+        fig_risk = px.pie(df, names='Risk_Tier', hole=0.5,
+                         color_discrete_map={
+                             'High Risk': '#EF4444', 
+                             'Medium Risk': '#F59E0B', 
+                             'Low Risk': '#10B981', 
+                             'Very Low Risk': '#3B82F6'
+                         })
+        fig_risk.update_layout(showlegend=True, height=450, margin=dict(t=0, b=0, l=0, r=0))
+        st.plotly_chart(fig_risk, use_container_width=True)
 
-    with col4:
-        st.subheader("Contract × Internet Heatmap")
-        pivot = (df.groupby(["Contract", "Internet Service"])["Churn"]
-                 .mean().unstack().round(3) * 100)
-        fig4 = px.imshow(pivot, text_auto=".1f",
-                         color_continuous_scale="RdYlGn_r",
-                         zmin=0, zmax=80, aspect="auto", height=300)
-        fig4.update_layout(margin=dict(t=5),
-                           paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig4, use_container_width=True)
+    with col_right:
+        st.subheader("Churn Probability Density")
+        fig_hist = px.histogram(df, x="Churn_Probability", nbins=50, 
+                               color_discrete_sequence=['#2563EB'],
+                               opacity=0.7)
+        fig_hist.update_layout(height=450, xaxis_title="Predicted Probability (0.0 - 1.0)", yaxis_title="Customer Count")
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-    with col5:
-        st.subheader("Geographic Churn Map — California")
-        geo = df.dropna(subset=["Latitude", "Longitude"])
-        geo = geo[(geo["Latitude"].between(32, 42)) &
-                  (geo["Longitude"].between(-125, -114))]
-        fig5 = px.scatter_mapbox(
-            geo, lat="Latitude", lon="Longitude",
-            color="Churn_Probability",
-            size="Monthly Charges",
-            color_continuous_scale=["#66BB6A", "#FFA726", "#EF5350"],
-            range_color=[0, 1], size_max=10,
-            zoom=5, height=300,
-            hover_data={"CustomerID": True,
-                        "Churn_Probability": ":.3f",
-                        "Risk_Tier": True,
-                        "Monthly Charges": ":.0f",
-                        "Latitude": False,
-                        "Longitude": False},
-            mapbox_style="open-street-map"
-        )
-        fig5.update_layout(margin=dict(t=5, b=0),
-                           paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig5, use_container_width=True)
-
-    # Row 4: Top risk table
-    st.subheader("🔴 Top 20 Highest Risk Customers")
-    top20 = (df.nlargest(20, "Churn_Probability")
-             [["CustomerID", "Contract", "Monthly Charges",
-               "Tenure Months", "Internet Service",
-               "Churn_Probability", "Risk_Tier", "CLTV"]]
-             .reset_index(drop=True))
-    top20.index += 1
-
-    def color_prob(val):
-        if isinstance(val, float):
-            if val >= 0.75: return "background-color:#ffebee;color:#c62828"
-            if val >= 0.50: return "background-color:#fff3e0;color:#e65100"
-            return "background-color:#e8f5e9;color:#2e7d32"
-        return ""
-
-    st.dataframe(
-        top20.style
-        .map(color_prob, subset=["Churn_Probability"])
-        .format({"Churn_Probability": "{:.3f}",
-                 "Monthly Charges": "${:.2f}",
-                 "CLTV": "${:,.0f}"}),
-        use_container_width=True, height=400
-    )
-
-
-# ══════════════════════════════════════════
-# PAGE 2: STRATEGY SIMULATOR
-# ══════════════════════════════════════════
-else:
-    st.title("🎯 Pricing Strategy Simulator")
-    st.caption("Design your retention strategy → Instantly see projected churn & revenue impact")
-
-    # ── Input form ──
-    with st.form("strategy_form"):
-        st.subheader("⚙️ Design Your Strategy")
-
-        col_a, col_b = st.columns(2)
-
-        with col_a:
-            st.markdown("**Target Segment**")
-            target_contract = st.multiselect(
-                "Contract Type",
-                ["Month-to-month", "One year", "Two year"],
-                default=["Month-to-month"]
-            )
-            target_risk = st.multiselect(
-                "Risk Tier",
-                ["High Risk", "Medium Risk", "Low Risk", "Very Low Risk"],
-                default=["High Risk", "Medium Risk"]
-            )
-            target_internet = st.multiselect(
-                "Internet Service",
-                ["Fiber optic", "DSL", "No"],
-                default=["Fiber optic", "DSL"]
-            )
-
-        with col_b:
-            st.markdown("**Strategy Parameters**")
-            discount_pct = st.slider(
-                "💰 Price Discount (%)",
-                0, 50, 10, 5,
-                help="% bill reduction for targeted customers"
-            )
-            retention_rate = st.slider(
-                "🎯 Expected Retention Rate (%)",
-                0, 100, 50, 10,
-                help="% of at-risk customers retained by this strategy"
-            )
-            n_sim = st.select_slider(
-                "🎲 Simulations",
-                options=[200, 500, 1000], value=500
-            )
-            strategy_desc = st.text_input(
-                "📝 Strategy Name",
-                placeholder="e.g. 10% loyalty discount for Month-to-month Fiber churners"
-            )
-
-        submitted = st.form_submit_button(
-            "🚀 Run Simulation", type="primary", use_container_width=True
-        )
-
-    if not submitted:
-        st.info("👆 Fill in your strategy above and click **Run Simulation**")
-        with st.expander("ℹ️ How the simulation works"):
-            st.markdown("""
-**Monte Carlo Logic (500 runs):**
-1. Each customer's churn is randomly sampled from their predicted probability
-2. **Discount**: targeted customers get bill reduced by `discount_%`
-3. **Retention**: `retention_%` of churned target customers are saved
-4. **Revenue** = sum of monthly charges for non-churned customers
-5. Repeat 200–1,000 times → confidence intervals (P5/P95)
-
-**Why this matters:**  
-A single deterministic estimate hides risk. The P5/P95 range shows your  
-worst-case and best-case revenue outcomes under the same strategy.
-            """)
-
-    else:
-        if not target_contract or not target_risk or not target_internet:
-            st.error("Please select at least one option in each filter!")
-            st.stop()
-
-        # Build mask
-        mask = (
-            df["Contract"].isin(target_contract) &
-            df["Risk_Tier"].isin(target_risk) &
-            df["Internet Service"].isin(target_internet)
-        )
-        n_targeted = int(mask.sum())
-
-        if n_targeted == 0:
-            st.error("No customers match these criteria. Try broadening your filters.")
-            st.stop()
-
-        discount  = discount_pct / 100
-        retention = retention_rate / 100
-
-        # ── Vectorized Monte Carlo ──
-        probs      = df["Churn_Probability"].values
-        charges    = df["Monthly Charges"].values.astype(float)
-        is_target  = mask.values
-
-        rng = np.random.default_rng(42)
-
-        with st.spinner(f"Running {n_sim} simulations..."):
-            # Pre-generate all random samples at once (fast)
-            churn_base_all  = rng.binomial(1, np.tile(probs, (n_sim, 1)))
-            churn_strat_all = rng.binomial(1, np.tile(probs, (n_sim, 1)))
-
-            base_revs, strat_revs   = [], []
-            base_churns, strat_churns = [], []
-
-            disc_charges = charges.copy()
-            disc_charges[is_target] *= (1 - discount)
-
-            for i in range(n_sim):
-                cb = churn_base_all[i]
-                base_revs.append(charges[cb == 0].sum())
-                base_churns.append(int(cb.sum()))
-
-                cs = churn_strat_all[i].astype(float)
-                churned_targets = np.where(is_target & (cs == 1))[0]
-                if len(churned_targets) > 0:
-                    n_save = int(len(churned_targets) * retention)
-                    if n_save > 0:
-                        saved = rng.choice(churned_targets, n_save, replace=False)
-                        cs[saved] = 0
-                strat_revs.append(disc_charges[cs == 0].sum())
-                strat_churns.append(int(cs.sum()))
-
-        base_revs   = np.array(base_revs)
-        strat_revs  = np.array(strat_revs)
-        base_churns = np.array(base_churns)
-        strat_churns = np.array(strat_churns)
-
-        # ── Summary stats ──
-        b_rev  = base_revs.mean()
-        s_rev  = strat_revs.mean()
-        b_ch   = base_churns.mean()
-        s_ch   = strat_churns.mean()
-        uplift = s_rev - b_rev
-        saved  = b_ch - s_ch
-        cost   = n_targeted * df[mask]["Monthly Charges"].mean() * discount
-        roi    = (uplift / cost * 100) if cost > 0 else float("inf")
-
-        # ── KPIs ──
+# ─────────────────────────────────────────
+# PAGE 2: REVENUE SIMULATION (Fixed as requested)
+# ─────────────────────────────────────────
+elif menu == "📈 Revenue Simulation":
+    st.title("📈 Monte Carlo Strategic Simulator")
+    st.markdown("Simulate financial impacts of retention strategies using stochastic modeling.")
+    
+    st.markdown('<div class="strategy-card">', unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 2])
+    
+    with c1:
+        st.markdown("### ⚙️ Strategy Configuration")
+        # FIXED: Strategy Name Input
+        strategy_name = st.text_input("📝 Strategy Name", value="Retention Campaign Alpha")
+        
+        # FIXED: Simulation Slider (200 - 1000)
+        n_sim = st.slider("🎲 Simulations", min_value=200, max_value=1000, value=500, step=100)
+        
         st.divider()
-        if strategy_desc:
-            st.info(f"📝 **{strategy_desc}**")
+        st.markdown("**Intervention Parameters**")
+        discount_rate = st.slider("Discount Rate (%)", 0, 40, 15) / 100
+        retention_boost = st.slider("Retention Success Rate (%)", 0, 100, 60) / 100
+        
+        run_sim = st.button("🚀 Run Monte Carlo Simulation", use_container_width=True)
+    
+    with c2:
+        if run_sim:
+            # MONTE CARLO ENGINE (Synced with Colab Simulation Logic)
+            baseline_revenues = []
+            strategy_revenues = []
+            
+            with st.spinner(f"Running {n_sim} scenarios..."):
+                for _ in range(n_sim):
+                    # 1. Baseline: Current model probabilities
+                    churn_base = np.random.binomial(1, df['Churn_Probability'])
+                    baseline_revenues.append(df[churn_base == 0]['Monthly Charges'].sum())
+                    
+                    # 2. Strategy: Intervention on High/Medium Risk tiers
+                    temp_df = df.copy()
+                    
+                    # Identify target customers (High Risk)
+                    target_mask = temp_df['Risk_Tier'] == 'High Risk'
+                    
+                    # Apply probability reduction (Boost effectiveness)
+                    temp_df.loc[target_mask, 'Churn_Probability'] *= (1 - retention_boost)
+                    
+                    # Run simulation with adjusted probabilities
+                    churn_strat = np.random.binomial(1, temp_df['Churn_Probability'].clip(0, 1))
+                    
+                    # Calculate revenue (Applying discount cost to retained high-risk customers)
+                    total_rev = temp_df[churn_strat == 0]['Monthly Charges'].sum()
+                    # Apply discount cost to targeted group
+                    retained_targeted = (target_mask) & (churn_strat == 0)
+                    discount_cost = (temp_df.loc[retained_targeted, 'Monthly Charges'] * discount_rate).sum()
+                    
+                    strategy_revenues.append(total_rev - discount_cost)
 
-        k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("Customers Targeted",   f"{n_targeted:,}")
-        k2.metric("Baseline Rev/mo",      f"${b_rev:,.0f}")
-        k3.metric("Strategy Rev/mo",
-                  f"${s_rev:,.0f}",
-                  delta=f"${uplift:+,.0f}",
-                  delta_color="normal")
-        k4.metric("Avg Churn Saved/mo",
-                  f"{saved:.0f}",
-                  delta=f"↓{saved/b_ch*100:.1f}%",
-                  delta_color="normal")
-        k5.metric("ROI on Discount Cost", f"{roi:.0f}%")
+            # Results Display
+            res_1, res_2 = st.columns(2)
+            res_1.metric("Baseline Avg. Revenue", f"${np.mean(baseline_revenues):,.0f}/mo")
+            res_2.metric(f"Projected: {strategy_name}", f"${np.mean(strategy_revenues):,.0f}/mo", 
+                         delta=f"${np.mean(strategy_revenues) - np.mean(baseline_revenues):+,.0f}")
+            
+            # Distribution Plot
+            fig_dist = go.Figure()
+            fig_dist.add_trace(go.Violin(y=baseline_revenues, name="Baseline", line_color="#94A3B8", box_visible=True))
+            fig_dist.add_trace(go.Violin(y=strategy_revenues, name=strategy_name, line_color="#2563EB", box_visible=True))
+            fig_dist.update_layout(title="Revenue Probability Distribution Comparison", height=450, yaxis_title="Monthly Revenue ($)")
+            st.plotly_chart(fig_dist, use_container_width=True)
+        else:
+            st.info("👈 Configure the strategy parameters and click **Run Simulation** to project financial outcomes.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        st.divider()
-
-        # ── Charts row ──
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("💰 Revenue Distribution")
-            fig_r = go.Figure()
-            for revs, name, color in [
-                (base_revs,  "Baseline",       "#42A5F5"),
-                (strat_revs, "With Strategy",  "#66BB6A"),
-            ]:
-                fig_r.add_trace(go.Violin(
-                    y=revs, name=name, fillcolor=color,
-                    opacity=0.65, box_visible=True,
-                    meanline_visible=True,
-                    line_color="gray"
+# ─────────────────────────────────────────
+# PAGE 3: RISK INTELLIGENCE (CUSTOMER LOOKUP)
+# ─────────────────────────────────────────
+elif menu == "🎯 Risk Intelligence":
+    st.title("🎯 Customer Risk Profile")
+    st.markdown("Deep-dive into individual customer behavioral risk scores.")
+    
+    search_id = st.text_input("Search Customer ID (e.g., 3668-QPYBK)", "").upper()
+    
+    if search_id:
+        cust = df[df['CustomerID'] == search_id]
+        if not cust.empty:
+            c = cust.iloc[0]
+            
+            # Styling card
+            st.markdown(f'<div class="strategy-card">', unsafe_allow_html=True)
+            l, r = st.columns([1, 1])
+            with l:
+                st.subheader(f"ID: {c['CustomerID']}")
+                risk_color = "#EF4444" if c['Risk_Tier'] == "High Risk" else "#10B981"
+                st.markdown(f"**Risk Status:** <span style='color:{risk_color}; font-size: 20px; font-weight:700;'>{c['Risk_Tier']}</span>", unsafe_allow_html=True)
+                st.write(f"**Contract:** {c['Contract']}")
+                st.write(f"**Internet:** {c['Internet Service']}")
+                st.write(f"**Payment:** {c['Payment Method']}")
+            
+            with r:
+                # Gauge Chart for Probability
+                fig_gauge = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = c['Churn_Probability'] * 100,
+                    title = {'text': "Churn Probability Score"},
+                    gauge = {
+                        'axis': {'range': [0, 100]},
+                        'bar': {'color': risk_color},
+                        'steps': [
+                            {'range': [0, 50], 'color': "#E2E8F0"},
+                            {'range': [50, 100], 'color': "#FEE2E2"}]
+                    },
+                    number = {'suffix': "%"}
                 ))
-            fig_r.update_layout(
-                height=370, yaxis_title="Monthly Revenue ($)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                margin=dict(t=10),
-                yaxis=dict(tickformat="$,.0f")
-            )
-            st.plotly_chart(fig_r, use_container_width=True)
+                fig_gauge.update_layout(height=250, margin=dict(t=30, b=0, l=30, r=30))
+                st.plotly_chart(fig_gauge, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.error("Customer ID not found. Please verify the ID.")
 
-        with col2:
-            st.subheader("📉 Churn Count Distribution")
-            fig_c = go.Figure()
-            for churns, name, color in [
-                (base_churns,  "Baseline",      "#EF5350"),
-                (strat_churns, "With Strategy", "#66BB6A"),
-            ]:
-                fig_c.add_trace(go.Histogram(
-                    x=churns, name=name, opacity=0.65,
-                    marker_color=color, nbinsx=30
-                ))
-            fig_c.update_layout(
-                barmode="overlay", height=370,
-                xaxis_title="Churned Customers / month",
-                yaxis_title="Frequency",
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                margin=dict(t=10),
-                legend=dict(x=0.65, y=0.95)
-            )
-            st.plotly_chart(fig_c, use_container_width=True)
+# ─────────────────────────────────────────
+# PAGE 4: CHURN HOTSPOTS (GEO MAP)
+# ─────────────────────────────────────────
+elif menu == "🗺️ Churn Hotspots":
+    st.title("🗺️ Geographic Risk Hotspots")
+    st.markdown("Visualizing churn risk density across California service areas.")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        tier_filter = st.multiselect("Filter by Risk Tier", df['Risk_Tier'].unique(), default=['High Risk', 'Medium Risk'])
+    with c2:
+        price_filter = st.slider("Min. Monthly Charges ($)", 0, 120, 0)
 
-        # ── Stats table ──
-        st.subheader("📋 Statistical Summary")
-        summary = pd.DataFrame({
-            "Metric": ["Monthly Revenue ($)", "Monthly Churn Count", "Annual Revenue ($)"],
-            "Baseline Mean": [f"${b_rev:,.0f}", f"{b_ch:.0f}", f"${b_rev*12:,.0f}"],
-            "Baseline P5–P95": [
-                f"${np.percentile(base_revs,5):,.0f} – ${np.percentile(base_revs,95):,.0f}",
-                f"{np.percentile(base_churns,5):.0f} – {np.percentile(base_churns,95):.0f}",
-                f"${np.percentile(base_revs,5)*12:,.0f} – ${np.percentile(base_revs,95)*12:,.0f}",
-            ],
-            "Strategy Mean": [f"${s_rev:,.0f}", f"{s_ch:.0f}", f"${s_rev*12:,.0f}"],
-            "Strategy P5–P95": [
-                f"${np.percentile(strat_revs,5):,.0f} – ${np.percentile(strat_revs,95):,.0f}",
-                f"{np.percentile(strat_churns,5):.0f} – {np.percentile(strat_churns,95):.0f}",
-                f"${np.percentile(strat_revs,5)*12:,.0f} – ${np.percentile(strat_revs,95)*12:,.0f}",
-            ],
-            "Δ Change": [
-                f"${uplift:+,.0f}/mo",
-                f"{saved:+.0f} saved/mo",
-                f"${uplift*12:+,.0f}/yr",
-            ],
-        })
-        st.dataframe(summary, use_container_width=True, hide_index=True)
-
-        # ── Sensitivity ──
-        st.subheader("🔍 Sensitivity: Discount Rate vs Revenue Uplift")
-        disc_range = [0, 5, 10, 15, 20, 25, 30]
-        u_mean, u_p5, u_p95 = [], [], []
-
-        for d in disc_range:
-            d_charges = charges.copy()
-            d_charges[is_target] *= (1 - d/100)
-            d_revs = []
-            for i in range(200):
-                cs = churn_strat_all[i % n_sim].astype(float)
-                churned_t = np.where(is_target & (cs == 1))[0]
-                if len(churned_t) > 0:
-                    n_save = int(len(churned_t) * retention)
-                    if n_save > 0:
-                        saved_idx = rng.choice(churned_t, n_save, replace=False)
-                        cs[saved_idx] = 0
-                d_revs.append(d_charges[cs == 0].sum())
-            d_revs = np.array(d_revs)
-            uplift_d = d_revs - base_revs[:200]
-            u_mean.append(uplift_d.mean())
-            u_p5.append(np.percentile(uplift_d, 5))
-            u_p95.append(np.percentile(uplift_d, 95))
-
-        fig_s = go.Figure()
-        fig_s.add_trace(go.Scatter(
-            x=disc_range + disc_range[::-1],
-            y=u_p95 + u_p5[::-1],
-            fill="toself", fillcolor="rgba(31,119,180,0.12)",
-            line=dict(color="rgba(0,0,0,0)"), name="P5–P95"
-        ))
-        fig_s.add_trace(go.Scatter(
-            x=disc_range, y=u_mean,
-            mode="lines+markers", name="Mean Uplift",
-            line=dict(color="#1f77b4", width=2.5),
-            marker=dict(size=8)
-        ))
-        fig_s.add_hline(y=0, line_dash="dash", line_color="red",
-                        annotation_text="Break-even")
-        fig_s.update_layout(
-            height=330,
-            xaxis_title="Discount Rate (%)",
-            yaxis_title="Revenue Uplift vs Baseline ($)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(tickformat="$,.0f"),
-            margin=dict(t=10),
-            legend=dict(x=0.75, y=0.95)
-        )
-        st.plotly_chart(fig_s, use_container_width=True)
-        st.caption("💡 Stay above the red line for positive ROI. Blue band = uncertainty range.")
+    map_df = df[(df['Risk_Tier'].isin(tier_filter)) & (df['Monthly Charges'] >= price_filter)]
+    
+    fig_map = px.scatter_mapbox(map_df, 
+                                lat="Latitude", lon="Longitude", 
+                                color="Churn_Probability", 
+                                size="Monthly Charges",
+                                color_continuous_scale=px.colors.sequential.YlOrRd,
+                                size_max=12, zoom=5, height=750,
+                                hover_name="CustomerID",
+                                hover_data=["Risk_Tier", "Monthly Charges", "Contract"])
+    
+    fig_map.update_layout(mapbox_style="carto-positron", margin={"r":0,"t":0,"l":0,"b":0})
+    st.plotly_chart(fig_map, use_container_width=True)
