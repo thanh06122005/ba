@@ -190,7 +190,7 @@ if page == "📊 Overview Dashboard":
 
     st.dataframe(
         top20.style
-        .applymap(color_prob, subset=["Churn_Probability"])
+        .map(color_prob, subset=["Churn_Probability"])
         .format({"Churn_Probability": "{:.3f}",
                  "Monthly Charges": "${:.2f}",
                  "CLTV": "${:,.0f}"}),
